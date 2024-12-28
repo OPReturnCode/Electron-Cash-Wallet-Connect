@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/walletconnect">
+        <file>assets/Icon.svg</file>
+    </qresource>
+</RCC>

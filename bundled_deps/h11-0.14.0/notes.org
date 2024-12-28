@@ -1,0 +1,144 @@
+Possible API breaking changes:
+
+- pondering moving headers to be (default)dict of lowercase bytestrings -> ordered lists of bytestrings
+
+  I guess we should get some benchmarks/profiles first, since one of the motivations would be to eliminate all these linear scans and reallocations we use when dealing with headers
+
+  - orrrrr... join most headers on "," and join Set-Cookie on ";" (HTTP/2 spec explicitly allows this!), and then we can just use a freakin' (case insensitive) dict. Terrible idea? or awesome idea?
+
+    - argh, no, HTTP/2 allows joining *Cookie:* on ";". Set-Cookie header syntax makes it impossible to join them in any way :-(
+
+- pondering whether to adopt the HTTP/2 style of sticking request/response line information directly into the header dict.
+
+  Advantages:
+  - code that wants to handle HTTP/2 will need to handle this anyway, might make it easier to write dual-stack clients/servers
+
+  - provides a more useful downstream representation for request targets that are in full-fledged http://... form.
+
+    I'm of mixed mind about how much these matter though -- HTTP/1.1 servers are supposedly required to support them, but HTTP/1.1 clients are forbidden to send them, and in practice the transition that the HTTP/1.1 spec envisions to clients sending these all the time is... just never going to happen. So I like following specs, but in reality servers never have and never will need to support these, making it feel a bit silly. They do get sent to proxies, though -- maybe someone wants to use h11 to implement a proxy?
+
+for better tests:
+https://github.com/kevin1024/pytest-httpbin
+http://pathod.net/
+
+XX TODO:
+   A server MUST NOT send a Transfer-Encoding header field in any
+   response with a status code of 1xx (Informational) or 204 (No
+   Content).  A server MUST NOT send a Transfer-Encoding header field in
+   any 2xx (Successful) response to a CONNECT request (Section 4.3.6 of
+   [RFC7231]).
+
+   A server MUST NOT send a Content-Length header field in any response
+   with a status code of 1xx (Informational) or 204 (No Content).  A
+   server MUST NOT send a Content-Length header field in any 2xx
+   (Successful) response to a CONNECT request (Section 4.3.6 of
+   [RFC7231]).
+
+http://coad.measurement-factory.com/details.html
+
+* notes on URLs
+
+there are multiple not fully consistent specs
+
+[[https://tools.ietf.org/html/rfc3986][RFC 3986]] is the basic spec that RFC 7230 refers to
+RFC 3987 adds "internationalized" support
+RFC 6874 revises RFC 3986 a bit for "IPv6 zone support" -- golang has some code to handle this
+
+and then there's the [[https://url.spec.whatwg.org/][WHATWG URL spec]]
+
+some commentary on this:
+https://daniel.haxx.se/blog/2016/05/11/my-url-isnt-your-url/
+
+note that curl has been forced to handle non-RFC 3986-compliant (but WHATWG URL-compliant) URLs in Location: headers -- specifically ones containing weird numbers of slashes, and ones containing spaces (!), and maybe UTF-8 and other such fun
+
+https://news.ycombinator.com/item?id=11673058
+"I don't think cURL implements this percent encoding yet - instead, it sends out binary paths on UTF-8 locale and Linux likewise." -- https://news.ycombinator.com/item?id=11674778
+
+also:
+https://github.com/bagder/docs/blob/master/URL-interop.md
+"This document is an attempt to describe where and how RFC 3986 (86), RFC 3987 (87) and the WHATWG URL Specification (TWUS) differ. This might be useful input when trying to interop with URLs on the modern Internet."
+
+** looking at the go http parser
+
+spaces in HTTP/1.1 request-lines are definitely verboten -- e.g. here's the go http server code for splitting a request line (parseRequestLine), which assumes the second space represents the end of the target:
+  https://golang.org/src/net/http/request.go#L680
+
+OTOH if we scroll down to readRequest, we see that they have a special case where for CONNECT targets, they accept either host:port OR /path/with/slash (wtf):
+
+  // CONNECT requests are used two different ways, and neither uses a full URL:
+  // The standard use is to tunnel HTTPS through an HTTP proxy.
+  // It looks like "CONNECT www.google.com:443 HTTP/1.1", and the parameter is
+  // just the authority section of a URL. This information should go in req.URL.Host.
+  //
+  // The net/rpc package also uses CONNECT, but there the parameter is a path
+  // that starts with a slash. It can be parsed with the regular URL parser,
+  // and the path will end up in req.URL.Path, where it needs to be in order for
+  // RPC to work.
+
+other interesting things:
+- they have a special removeZone function to handle [[https://tools.ietf.org/html/rfc6874][RFC 6874]], which revises RFC 3986
+- they provide both a parsed URL and a raw string containing whatever was in the request line
+
+** experiment to check how firefox handles UTF-8 in URLs:
+
+$ socat - TCP-LISTEN:12345
+then browse to http://localhost:12345/✔
+
+produces:
+
+GET /%E2%9C%94 HTTP/1.1
+Host: localhost:12345
+User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:47.0) Gecko/20100101 Firefox/47.0
+Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8
+Accept-Language: en-US,en;q=0.5
+Accept-Encoding: gzip, deflate
+DNT: 1
+Connection: keep-alive
+
+* notes for building something on top of this
+
+headers to consider auto-supporting at the high-level:
+- Date: https://svn.tools.ietf.org/svn/wg/httpbis/specs/rfc7231.html#header.date
+    MUST be sent by origin servers who know what time it is
+    (clients don't bother)
+- Server
+- automagic compression
+
+should let handlers control timeouts
+
+################################################################
+
+Higher level stuff:
+- Timeouts: waiting for 100-continue, killing idle keepalive connections,
+    killing idle connections in general
+    basically just need a timeout when we block on read, and if it times out
+      then we close. should be settable in the APIs that block on read
+      (e.g. iterating over body).
+- Expect:
+    https://svn.tools.ietf.org/svn/wg/httpbis/specs/rfc7231.html#rfc.section.5.1.1
+  This is tightly integrated with flow control, not a lot we can do, except
+  maybe provide a method to be called before blocking waiting for the
+  request body?
+- Sending an error when things go wrong (esp. 400 Bad Request)
+
+Connection shutdown is tricky. Quoth RFC 7230:
+
+"If a server performs an immediate close of a TCP connection, there is a
+significant risk that the client will not be able to read the last HTTP
+response. If the server receives additional data from the client on a fully
+closed connection, such as another request that was sent by the client
+before receiving the server's response, the server's TCP stack will send a
+reset packet to the client; unfortunately, the reset packet might erase the
+client's unacknowledged input buffers before they can be read and
+interpreted by the client's HTTP parser.
+
+"To avoid the TCP reset problem, servers typically close a connection in
+stages. First, the server performs a half-close by closing only the write
+side of the read/write connection. The server then continues to read from
+the connection until it receives a corresponding close by the client, or
+until the server is reasonably certain that its own TCP stack has received
+the client's acknowledgement of the packet(s) containing the server's last
+response. Finally, the server fully closes the connection."
+
+So this needs shutdown(2). This is what data_to_send's close means -- this
+complicated close dance.

@@ -1,0 +1,11 @@
+{
+  "display_name": "Electron Cash Wallet Connect V2",
+  "description": "Wallet Connect V2 implementation",
+  "version": "0.01",
+  "project_url": "",
+  "minimum_ec_version": "4.3.0",
+  "package_name": "walletconnect",
+  "available_for": [
+    "qt"
+  ]
+}
