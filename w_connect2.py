@@ -34,7 +34,7 @@ WCClient.set_wallet_metadata(WALLET_CONNECT_METADATA)
 
 
 class WalletConnect:
-    def __init__(self, wallet_connect_uri, wallet_address, wallet, proxy_opts):
+    def __init__(self, wallet_connect_uri, wallet_address, wallet, password, proxy_opts):
         # assert proxy_opts is not None
 
         self.session_data = None
@@ -43,6 +43,7 @@ class WalletConnect:
         self.wallet_connect_uri = wallet_connect_uri
         self.wallet_address = wallet_address
         self.wallet = wallet
+        self.password = password
         self.proxy_opts = proxy_opts
 
         self.wc_client = WCClient.from_wc_uri(self.wallet_connect_uri, socks_opts=self.proxy_opts)
@@ -90,7 +91,8 @@ class WalletConnect:
 
                     elif params["request"]["method"] == WALLET_CONNECT_SIGN_TRANSACTION:
                         tx_data = params['request']['params']
-                        ec_tx = utils.generate_electron_cash_tx_from_libauth_format(tx_data, self.wallet)
+                        ec_tx = utils.generate_electron_cash_tx_from_libauth_format(
+                            tx_data, self.wallet, self.wallet_address, self.password)
                         task_data = {
                             "type": WALLET_CONNECT_SIGN_TRANSACTION,
                             "message_id": message_id,

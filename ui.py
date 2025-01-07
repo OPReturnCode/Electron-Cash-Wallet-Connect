@@ -24,6 +24,7 @@ class WalletConnectDialog(WindowModalDialog):
         self.parent = parent
         self.wallet = self.parent.wallet
         self.address = None
+        self.password = None
 
         self.wallet_connect = None
         self.proxy_opts = None
@@ -120,9 +121,23 @@ class WalletConnectDialog(WindowModalDialog):
             self.wallet_connect.close_session()
             self.active_sessions.clear()
 
+        if self.wallet.is_watching_only():
+            self.parent.show_warning(_(
+                "This wallet is watching-only."
+                "This means you are not able to sign transactions or messages. Or spend BCH in any way."))
+            return
+
         try:
+            if self.wallet.has_password():
+                pd = PasswordDialog()
+                password = pd.run()
+                self.wallet.check_password(password)
+                self.password = password
+                del pd
+
             self.wallet_connect = w_connect2.WalletConnect(
-                self.wallet_connect_uri_text_edit.text(), self.address.to_token_string(), self.wallet, self.proxy_opts)
+                self.wallet_connect_uri_text_edit.text(), self.address.to_token_string(),
+                self.wallet, self.password, self.proxy_opts)
 
             session_data = self.wallet_connect.open_session()
 
@@ -159,12 +174,23 @@ class WalletConnectDialog(WindowModalDialog):
         pass
 
     def get_wallet_address(self):
+
+        # For backward compatibility, check if an address is stored in the incorrect location and fix it.
+        # This section can be removed in future iterations, as it is only relevant to users of the initial version.
         address_str = self.parent.config.get("wallet_connect_address")
+        if address_str:
+            self.wallet.is_mine(address.Address.from_string(address_str))
+            self.wallet.storage.put("wallet_connect_address", address_str)
+            self.wallet.storage.write()
+            self.parent.config.set_key("wallet_connect_address", None)
+
+        address_str = self.wallet.storage.get("wallet_connect_address")
         if address_str:
             self.address = address.Address.from_string(address_str)
         else:
             self.address = self.wallet.get_unused_address(frozen_ok=False)
-            self.parent.config.set_key("wallet_connect_address", self.address.to_cashaddr())
+            self.wallet.storage.put("wallet_connect_address", self.address.to_cashaddr())
+            self.wallet.storage.write()
         self.wallet.set_frozen_state([self.address], True)
 
         return self.address
