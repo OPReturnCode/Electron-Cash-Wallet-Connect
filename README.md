@@ -5,6 +5,9 @@ Electron Cash Wallet Connect V2 is a plugin that enables WalletConnect functiona
 ## Requirements
 [Electron Cash](https://github.com/Electron-Cash/Electron-Cash) 4.3.0 or newer.
 ## Install
+
+You need to first remove any previous versions installed from `Tools -> Installed Plugins` and restart Electron Cash. Then:
+
 1. Download the latest release.
 2. From the Electron Cash application menu select `Tools -> Installed Plugins`, then click `Add plugin` and select the downloaded file from step 1.
 3. The plugin will then be installed and enabled.
